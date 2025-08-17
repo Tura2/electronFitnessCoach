@@ -5,7 +5,7 @@ export default function Sidebar({ active, onSelect, tabs }){
   const map = {
     Calendar: <IconCalendar className="nav-icon"/>,
     Athletes: <IconUsers className="nav-icon"/>,
-    Messages: <IconMail className="nav-icon"/>,
+    Invites: <IconMail className="nav-icon"/>,
     History: <IconClock className="nav-icon"/>,
     Settings: <IconSettings className="nav-icon"/>,
   };

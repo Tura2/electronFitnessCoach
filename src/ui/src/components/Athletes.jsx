@@ -1,3 +1,4 @@
+// src/ui/src/components/Athletes.jsx
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import Modal from './Modal.jsx';
 
@@ -9,13 +10,17 @@ export default function Athletes() {
   const [toast, setToast] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // מצב מודאל
+  // Add/Edit modal state
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState('add'); // 'add' | 'edit'
   const [form, setForm] = useState(emptyForm);
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const firstInputRef = useRef(null);
+
+  // Delete confirm modal
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
   useEffect(() => { load(); }, []);
   async function load() {
@@ -25,21 +30,33 @@ export default function Athletes() {
       setRows(Array.isArray(data) ? data : []);
       setErrorMsg('');
     } catch {
-      setErrorMsg('שגיאה בטעינת מתאמנים');
+      setErrorMsg('Failed to load athletes');
     } finally { setLoading(false); }
   }
 
-  // ולידציה
+  // Focus first input when modal opens
+  useEffect(() => {
+    if (open) setTimeout(() => firstInputRef.current?.focus(), 50);
+  }, [open]);
+
+  // Helpers
+  function trimmed(obj){
+    const o = {};
+    for (const [k,v] of Object.entries(obj)) o[k] = typeof v === 'string' ? v.trim() : v;
+    return o;
+  }
+
+  // Validation
   function validate(values){
     const errs = {};
-    if (!values.first_name?.trim()) errs.first_name = 'שם פרטי חובה';
+    if (!values.first_name?.trim()) errs.first_name = 'First name is required';
     if (values.email?.trim()){
       const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim());
-      if (!ok) errs.email = 'כתובת מייל לא תקינה';
+      if (!ok) errs.email = 'Invalid email address';
     }
     if (values.phone?.trim()){
       const digits = values.phone.replace(/[^\d]/g,'');
-      if (digits.length && digits.length < 7) errs.phone = 'מספר קצר מדי';
+      if (digits.length && digits.length < 7) errs.phone = 'Phone number is too short';
     }
     return errs;
   }
@@ -71,45 +88,53 @@ export default function Athletes() {
   }
 
   async function onSubmit(e){
-  e?.preventDefault?.();
-  setTouched({ first_name:true, email:true, phone:true, last_name:true });
-  if (!isValid) return;
+    e?.preventDefault?.();
+    setTouched({ first_name:true, email:true, phone:true, last_name:true });
+    if (!isValid) return;
 
-  setSaving(true);
-  try {
-    const payload = trimmed(form);
-    if (mode === 'add'){
-      const res = await window.api?.createTrainee?.(payload);
-      if (!res?.ok) throw new Error(res?.error || 'שגיאה בהוספה');
-      setToast('נוסף בהצלחה');
-    } else {
-      const res = await window.api?.updateTrainee?.(editId, payload);
-      if (!res?.ok) throw new Error(res?.error || 'שגיאה בעדכון');
-      setToast('עודכן בהצלחה');
-    }
-    closeModal();
-    load();
-    setTimeout(()=>setToast(''), 2000);
-  } catch (err) {
-    setErrorMsg(err.message || 'תקלה בשמירה');
-  } finally {
-    setSaving(false);
-  }
-}
-  async function onDelete(id){
-    if (!confirm('למחוק מתאמן/ת?')) return;
+    setSaving(true);
     try {
-      const res = await window.api?.deleteTrainee?.(id);
-      if (!res?.ok) throw new Error(res?.error || 'שגיאה במחיקה');
-      setToast('נמחק');
+      const payload = trimmed(form);
+      if (mode === 'add'){
+        const res = await window.api?.createTrainee?.(payload);
+        if (!res?.ok) throw new Error(res?.error || 'Create failed');
+        setToast('Athlete added');
+      } else {
+        const res = await window.api?.updateTrainee?.(editId, payload);
+        if (!res?.ok) throw new Error(res?.error || 'Update failed');
+        setToast('Athlete updated');
+      }
+      closeModal();
       load();
       setTimeout(()=>setToast(''), 2000);
     } catch (err) {
-      setErrorMsg(err.message || 'תקלה במחיקה');
+      setErrorMsg(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
     }
   }
 
-  // Ctrl/Cmd+S לשמירה בתוך מודאל
+  function askDelete(row){
+    setConfirmTarget(row);
+    setConfirmOpen(true);
+  }
+
+  async function confirmDelete(){
+    if (!confirmTarget) return;
+    try {
+      const res = await window.api?.deleteTrainee?.(confirmTarget.id);
+      if (!res?.ok) throw new Error(res?.error || 'Delete failed');
+      setToast('Athlete deleted');
+      setConfirmOpen(false);
+      setConfirmTarget(null);
+      await load();
+      setTimeout(()=>setToast(''), 2000);
+    } catch (err) {
+      setErrorMsg(err.message || 'Delete failed');
+    }
+  }
+
+  // Ctrl/Cmd+S to save inside modal
   useEffect(() => {
     function onKey(e){
       if (!open) return;
@@ -125,15 +150,15 @@ export default function Athletes() {
     <table className="table">
       <thead>
         <tr>
-          <th>שם</th>
-          <th>מייל</th>
-          <th>טלפון</th>
-          <th style={{width:200}}>פעולות</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th style={{width:200}}>Actions</th>
         </tr>
       </thead>
       <tbody>
         {rows.map(r => {
-          const fullName = `${r.first_name || ''} ${r.last_name || ''}`.trim() || '(ללא שם)';
+          const fullName = `${r.first_name || ''} ${r.last_name || ''}`.trim() || '(No name)';
           return (
             <tr key={r.id}>
               <td>{fullName}</td>
@@ -141,15 +166,15 @@ export default function Athletes() {
               <td>{r.phone || ''}</td>
               <td>
                 <div style={{display:'flex', gap:8}}>
-                  <button className="btn" onClick={()=>openEdit(r)}>עריכה</button>
-                  <button className="btn danger" onClick={()=>onDelete(r.id)}>מחיקה</button>
+                  <button className="btn" onClick={()=>openEdit(r)}>Edit</button>
+                  <button className="btn danger" onClick={()=>askDelete(r)}>Delete</button>
                 </div>
               </td>
             </tr>
           );
         })}
         {!rows.length && !loading && (
-          <tr><td colSpan={4} style={{textAlign:'center', color:'#64748b'}}>אין מתאמנים עדיין</td></tr>
+          <tr><td colSpan={4} style={{textAlign:'center', color:'#64748b'}}>No athletes yet</td></tr>
         )}
       </tbody>
     </table>
@@ -159,7 +184,7 @@ export default function Athletes() {
     <section className="card">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
         <h2 style={{margin:0}}>Athletes</h2>
-        <button className="btn" onClick={openAdd}>+ הוספה</button>
+        <button className="btn" onClick={openAdd}>+ Add</button>
       </div>
 
       {toast && <div className="toast success">{toast}</div>}
@@ -167,16 +192,15 @@ export default function Athletes() {
 
       {loading ? <p>Loading…</p> : Table}
 
+      {/* Add/Edit modal */}
       {open && (
-        <Modal title={mode==='add' ? 'הוספת מתאמן/ת' : 'עריכת מתאמן/ת'} onClose={closeModal}>
+        <Modal title={mode==='add' ? 'Add Athlete' : 'Edit Athlete'} onClose={closeModal}>
           <form onSubmit={onSubmit} className="form-grid two-cols">
-            <Field
-              label="שם פרטי"
-              error={touched.first_name ? errs.first_name : ''}
-            >
+            <Field label="First name" error={touched.first_name ? errs.first_name : ''}>
               <input
                 ref={firstInputRef}
-                placeholder="לדוגמה: איתן"
+                className="input"
+                placeholder="e.g., Ethan"
                 autoComplete="given-name"
                 value={form.first_name}
                 onChange={e=>onChange('first_name', e.target.value)}
@@ -185,9 +209,10 @@ export default function Athletes() {
               />
             </Field>
 
-            <Field label="שם משפחה">
+            <Field label="Last name">
               <input
-                placeholder="אופציונלי"
+                className="input"
+                placeholder="Optional"
                 autoComplete="family-name"
                 value={form.last_name}
                 onChange={e=>onChange('last_name', e.target.value)}
@@ -195,12 +220,9 @@ export default function Athletes() {
               />
             </Field>
 
-            <Field
-              label="מייל"
-              help="לא חובה, משמש לזימונים"
-              error={touched.email ? errs.email : ''}
-            >
+            <Field label="Email" help="Optional, used for invites" error={touched.email ? errs.email : ''}>
               <input
+                className="input"
                 type="email"
                 placeholder="name@example.com"
                 autoComplete="email"
@@ -210,12 +232,9 @@ export default function Athletes() {
               />
             </Field>
 
-            <Field
-              label="טלפון"
-              help="לא חובה"
-              error={touched.phone ? errs.phone : ''}
-            >
+            <Field label="Phone" help="Optional" error={touched.phone ? errs.phone : ''}>
               <input
+                className="input"
                 inputMode="tel"
                 placeholder="050-1234567"
                 autoComplete="tel"
@@ -227,11 +246,34 @@ export default function Athletes() {
 
             <div className="form-actions span-cols">
               <button className="btn" type="submit" disabled={!isValid || saving}>
-                {saving ? 'שומר…' : (mode === 'add' ? 'שמור/י' : 'עדכן/י')}
+                {saving ? 'Saving…' : (mode === 'add' ? 'Save' : 'Update')}
               </button>
-              <button className="btn ghost" type="button" onClick={closeModal} disabled={saving}>ביטול</button>
+              <button className="btn ghost" type="button" onClick={closeModal} disabled={saving}>Cancel</button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Delete confirmation modal (styled) */}
+      {confirmOpen && confirmTarget && (
+        <Modal title="Delete athlete?" onClose={()=>setConfirmOpen(false)}>
+          <div className="form-grid">
+            <div className="toast error">
+              This will permanently remove the athlete from this app.
+            </div>
+            <div>
+              <div><b>Name:</b> {`${confirmTarget.first_name||''} ${confirmTarget.last_name||''}`.trim() || '—'}</div>
+              {confirmTarget.email && <div><b>Email:</b> {confirmTarget.email}</div>}
+              {confirmTarget.phone && <div><b>Phone:</b> {confirmTarget.phone}</div>}
+              <div className="small" style={{color:'var(--text-muted)', marginTop:6}}>
+                Existing practices will no longer have a linked athlete.
+              </div>
+            </div>
+            <div className="form-actions" style={{justifyContent:'flex-end'}}>
+              <button className="btn danger" onClick={confirmDelete}>Yes, delete</button>
+              <button className="btn ghost" onClick={()=>setConfirmOpen(false)}>Cancel</button>
+            </div>
+          </div>
         </Modal>
       )}
     </section>

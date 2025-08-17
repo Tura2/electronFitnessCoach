@@ -115,7 +115,7 @@ body{
 
 /* Inputs */
 .input,.select,input,select,textarea{
-  background:#fff; color:var(--text-strong); border:1px solid var(--border);
+  background:var(--surface); color:var(--text-strong); border:1px solid var(--border);
   border-radius:var(--r12); padding:10px 12px; min-height:40px; font-size:14px;
 }
 .input:focus,.select:focus,input:focus,select:focus,textarea:focus{
@@ -133,7 +133,7 @@ body{
 
 /* ========= Tables ========= */
 .table{width:100%; border-collapse:separate; border-spacing:0; border:1px solid var(--border); border-radius:var(--r16); overflow:hidden}
-.table th,.table td{padding:12px 14px; border-bottom:1px solid var(--border); text-align:right}
+.table th,.table td{padding:12px 14px; border-bottom:1px solid var(--border); text-align:left}
 .table th{background:var(--primary-50); font-weight:700}
 .table tr:last-child td{border-bottom:0}
 
@@ -145,8 +145,8 @@ body{
 
 .modal-card{
   width:min(520px, 94vw);
-  background:var(--surface);      /* במקום #fff */
-  color:var(--text-strong);       /* תמיד בצבע הטקסט לפי המצב */
+  background:var(--surface);
+  color:var(--text-strong);
   border:1px solid var(--border);
   border-radius:14px;
   padding:16px;
@@ -156,14 +156,26 @@ body{
 
 @keyframes popIn{from{transform:translateY(6px);opacity:.7}to{transform:none;opacity:1}}
 
+/* Primary header with white icon */
 .modal-header{
+  background:var(--primary-600);
+  color:#fff;
+  border-bottom:none;
+  border-top-left-radius:var(--r16);
+  border-top-right-radius:var(--r16);
+  margin:-16px -16px 12px -16px; /* edge-to-edge header */
+  padding:12px 16px;
   display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding-bottom:8px; border-bottom:1px solid var(--border);
 }
+.icon-btn{
+  background:transparent; border:none; color:#fff;
+  font-size:22px; line-height:1; cursor:pointer;
+}
+.icon-btn:hover{opacity:.9}
 
-.modal-body{margin-top:12px; max-height:70vh; overflow:auto}
+.modal-body{margin-top:4px; max-height:70vh; overflow:auto}
 
-/* טופס בתוך מודאל – יתאים ל-Light/Dark אוטומטית */
+/* Form elements inside modal (inherit theme) */
 .modal-card input,
 .modal-card select,
 .modal-card textarea{
@@ -214,9 +226,28 @@ body{
 .fc .fc-button:focus{box-shadow:var(--focus)}
 .fc .fc-daygrid-day.fc-day-today, .fc .fc-timegrid-col.fc-day-today{background:var(--primary-50)}
 .fc .fc-event{
-  border:none; border-right:0; border-left:4px solid var(--accent-500);
-  background:linear-gradient(0deg, rgba(14,165,233,.12), rgba(14,165,233,.12)), #fff;
-  color:var(--text-strong); border-radius:12px; padding:2px 6px;
+  border:1px solid var(--border);
+  border-left:4px solid var(--accent-500);
+  background:var(--primary-50);
+  color:var(--text-strong);
+  border-radius:12px; padding:2px 6px;
 }
 .fc .fc-timegrid-slot{height:32px}
 .fc .fc-highlight{background: rgba(37,99,235,.12)}
+
+/* ========= Toggle Switch ========= */
+.switch{
+  position: relative; display: inline-block; width: 44px; height: 24px;
+}
+.switch input{ opacity: 0; width: 0; height: 0; }
+.switch .slider{
+  position: absolute; inset:0; cursor: pointer;
+  background: #e2e8f0; border-radius: 999px; transition: .2s;
+  box-shadow: var(--shadow-sm);
+}
+.switch .slider:before{
+  content:""; position:absolute; height:18px; width:18px; left:3px; top:3px;
+  background:#fff; border-radius:50%; transition:.2s; box-shadow: var(--shadow-sm);
+}
+.switch input:checked + .slider{ background: var(--primary-600); }
+.switch input:checked + .slider:before{ transform: translateX(20px); }

@@ -43,6 +43,7 @@ function openDb(app) {
       notes      TEXT,
       FOREIGN KEY (trainee_id) REFERENCES trainees(id) ON DELETE SET NULL
     );
+    
 
     CREATE TABLE IF NOT EXISTS templates (
       id      TEXT PRIMARY KEY,

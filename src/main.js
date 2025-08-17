@@ -3,8 +3,30 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { openDb } = require('./db');
 const { v4: uuid } = require('uuid');
+const { registerInvitesIpc, createOrUpdateGoogleEventForSession } = require('./invitations');
+const { registerHistoryIpc } = require('./history');
+
+
 
 let db;
+
+function getSetting(db, key, fallback = null) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key=@key').get({ key });
+    if (!row) return fallback;
+    try { return JSON.parse(row.value); } catch { return row.value; }
+  } catch {
+    return fallback;
+  }
+}
+function setSetting(db, key, value) {
+  const str = typeof value === 'string' ? value : JSON.stringify(value);
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (@key, @value)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value
+  `).run({ key, value: str });
+}
+
 
 function isDev() {
   return !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
@@ -36,6 +58,8 @@ app.whenReady().then(() => {
   db = openDb(app);
   registerIpc();
   createWindow();
+  registerInvitesIpc(ipcMain, db);
+  registerHistoryIpc(ipcMain, db);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -135,48 +159,40 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('sessions:create', (_e, payload) => {
+  ipcMain.handle('sessions:create', async (_e, payload) => {
+  const { v4: uuid } = require('uuid');
+  const id = uuid();
+  const {
+    trainee_id = null,
+    start_time,
+    end_time,
+    status = 'planned',
+    notes = '',
+    // new:
+    syncGoogle = false
+  } = payload || {};
+
+  if (!start_time) return { ok: false, error: 'start_time is required' };
+
+  const stmt = db.prepare(`
+    INSERT INTO sessions (id, trainee_id, start_time, end_time, location, status, notes)
+    VALUES (@id, @trainee_id, @start_time, @end_time, @location, @status, @notes)
+  `);
+  stmt.run({ id, trainee_id, start_time, end_time, location: '', status, notes });
+
+  // If requested or default-on via settings, mirror to Google
+  const auto = !!(db.prepare('SELECT value FROM settings WHERE key="google.syncOnCreate"').get()?.value);
+  if (syncGoogle || auto) {
     try {
-      const id = uuid();
-      const {
-        trainee_id = null,
-        start_time,      // ISO string
-        end_time,        // ISO string
-        location = '',
-        status = 'planned',
-        notes = ''
-      } = payload || {};
-
-      if (!start_time) throw new Error('start_time is required');
-
-      const stmt = db.prepare(`
-        INSERT INTO sessions (id, trainee_id, start_time, end_time, location, status, notes)
-        VALUES (@id, @trainee_id, @start_time, @end_time, @location, @status, @notes)
-      `);
-      stmt.run({ id, trainee_id, start_time, end_time, location, status, notes });
-      return { ok: true, id };
-    } catch (e) {
-      return { ok: false, error: e.message };
+      await createOrUpdateGoogleEventForSession(db, id);
+    } catch (err) {
+      // don't fail creation if Google fails; report back
+      return { ok: true, id, google: { ok: false, error: err.message } };
     }
-  });
+  }
+  return { ok: true, id };
+});
 
-  ipcMain.handle('sessions:update', (_e, { id, data }) => {
-    try {
-      if (!id) throw new Error('id is required');
-      const fields = ['trainee_id','start_time','end_time','location','status','notes'];
-      const sets = [];
-      const params = { id };
-      for (const f of fields) {
-        if (data?.[f] !== undefined) { sets.push(`${f}=@${f}`); params[f] = data[f]; }
-      }
-      if (!sets.length) throw new Error('No fields to update');
-      const stmt = db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id=@id`);
-      const res = stmt.run(params);
-      return { ok: res.changes > 0 };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  });
 
   ipcMain.handle('sessions:delete', (_e, id) => {
     try {
@@ -214,5 +230,27 @@ function registerIpc() {
       return { ok: false, error: e.message };
     }
   });
+  // ===== Settings (bulk) =====
+ipcMain.handle('settings:bulkGet', (_e, keys) => {
+  try {
+    if (!Array.isArray(keys)) throw new Error('keys[] is required');
+    const out = {};
+    for (const k of keys) out[k] = getSetting(db, k, null);
+    return { ok: true, data: out };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('settings:bulkSet', (_e, kv) => {
+  try {
+    if (!kv || typeof kv !== 'object') throw new Error('object payload required');
+    for (const [k, v] of Object.entries(kv)) setSetting(db, k, v);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 }
 
