@@ -1,17 +1,23 @@
-import React from 'react';
+import React from 'react';  
+import { IconCalendar, IconUsers, IconMail, IconClock, IconSettings } from './icons.jsx';
 
-export default function Sidebar({ active, onSelect, tabs }) {
+export default function Sidebar({ active, onSelect, tabs }){
+  const map = {
+    Calendar: <IconCalendar className="nav-icon"/>,
+    Athletes: <IconUsers className="nav-icon"/>,
+    Messages: <IconMail className="nav-icon"/>,
+    History: <IconClock className="nav-icon"/>,
+    Settings: <IconSettings className="nav-icon"/>,
+  };
+
   return (
-    <nav>
-      {tabs.map(t => (
-        <button
-          key={t}
-          className={`tab-btn ${active === t ? 'active' : ''}`}
-          onClick={() => onSelect(t)}
-        >
-          {t}
+    <div>
+      <div className="brand">🏋️‍♀️ <span>Fitness Coach</span></div>
+      {tabs.map(t=>(
+        <button key={t} className={`nav-btn ${active===t?'active':''}`} onClick={()=>onSelect(t)}>
+          {map[t]} <span>{t}</span>
         </button>
       ))}
-    </nav>
+    </div>
   );
 }
