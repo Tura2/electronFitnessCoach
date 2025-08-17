@@ -1,3 +1,4 @@
+// src/ui/src/components/Settings.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 
 const KEYS = [
@@ -7,8 +8,6 @@ const KEYS = [
   'google.clientId',
   'google.clientSecret',
   'google.calendarId',
-  'google.syncOnCreate',
-  'google.inviteAthlete',
   'calendar.tz'
 ];
 
@@ -20,8 +19,6 @@ export default function Settings() {
     'google.clientId': '',
     'google.clientSecret': '',
     'google.calendarId': 'primary',
-    'google.syncOnCreate': false,
-    'google.inviteAthlete': true,
     'calendar.tz': 'Asia/Jerusalem'
   });
   const [loading, setLoading] = useState(true);
@@ -143,7 +140,7 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Google Calendar only */}
+          {/* Google Calendar */}
           <div className="card" style={{padding:16}}>
             <div className="h3" style={{marginTop:0, marginBottom:12}}>Google Calendar</div>
             <div className="form-grid two-cols">
@@ -171,20 +168,9 @@ export default function Settings() {
                   placeholder="primary"
                 />
               </Field>
-              <label className="field">
-                <div className="field-head"><span>Invite athlete on create</span></div>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={!!values['google.inviteAthlete']}
-                    onChange={(e)=>set('google.inviteAthlete', e.target.checked)}
-                  />
-                  <span className="slider" />
-                </label>
-              </label>
             </div>
             <div className="small" style={{marginTop:8, color:'var(--text-muted)'}}>
-              When you first send an invite, you’ll be prompted to connect your Google account.
+              You’ll connect your Google account the first time you send an invite from Messages.
             </div>
           </div>
         </>

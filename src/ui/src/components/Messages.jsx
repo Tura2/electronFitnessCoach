@@ -17,6 +17,7 @@ export default function Invites() {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [showUnsentOnly, setShowUnsentOnly] = useState(false);
 
   // delete modal
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -31,7 +32,7 @@ export default function Invites() {
   async function sendGoogle(id){
     setBusy(true);
     const r = await window.api.sendInviteGoogle(id);
-    setMsg(r.ok ? 'Google invite created' : `Error: ${r.error}`);
+    setMsg(r.ok ? 'Invite created in Google Calendar' : `Error: ${r.error}`);
     await load(); setBusy(false);
     setTimeout(()=>setMsg(''), 2500);
   }
@@ -62,12 +63,29 @@ export default function Invites() {
     }
   }
 
+  const view = showUnsentOnly ? rows.filter(r => (r.status || 'planned') !== 'sent') : rows;
+
   return (
     <section className="card">
       <div className="section-head">
         <h2 style={{margin:0}}>Weekly Invites</h2>
-        <div style={{display:'flex', gap:8}}>
-          <button className="btn" onClick={sendAllGoogle} disabled={busy}>Send all (Google)</button>
+        <div style={{display:'flex', gap:8, alignItems:'center'}}>
+          <label className="field" style={{margin:0}}>
+            <div className="field-head">
+              <span>Show unsent only</span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={showUnsentOnly}
+                onChange={(e)=>setShowUnsentOnly(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          </label>
+          <button className="btn" onClick={sendAllGoogle} disabled={busy || view.length === 0}>
+            Send all (Google)
+          </button>
         </div>
       </div>
 
@@ -79,25 +97,38 @@ export default function Invites() {
             <th>Date & Time</th>
             <th>Athlete</th>
             <th>Email</th>
-            <th>Status</th>
-            <th style={{width:280}}>Actions</th>
+            <th>Invite</th>
+            <th style={{width:320}}>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => {
+          {view.map(r => {
             const name = `${r.first_name||''} ${r.last_name||''}`.trim() || '—';
             const dt = new Date(r.start_time).toLocaleString();
-            const status = r.status || 'planned';
+            const status = (r.status || 'planned').toLowerCase();
+            const isSent = status === 'sent';
+
             return (
               <tr key={r.id}>
                 <td>{dt}</td>
                 <td>{name}</td>
                 <td>{r.email || '—'}</td>
-                <td>{status}</td>
+                <td>
+                  {isSent ? (
+                    <span className="badge badge-green">Sent</span>
+                  ) : (
+                    <span className="badge badge-gray">Not sent</span>
+                  )}
+                </td>
                 <td>
                   <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
-                    <button className="btn" onClick={()=>sendGoogle(r.id)} disabled={!r.email || busy}>
-                      Send (Google)
+                    <button
+                      className="btn"
+                      onClick={()=>sendGoogle(r.id)}
+                      disabled={busy || !r.email}
+                      title={r.email ? '' : 'No email on athlete'}
+                    >
+                      {isSent ? 'Resend (Google)' : 'Send (Google)'}
                     </button>
                     <button className="btn danger" onClick={()=>askDelete(r)} disabled={busy}>
                       Delete
@@ -107,7 +138,9 @@ export default function Invites() {
               </tr>
             );
           })}
-          {!rows.length && <tr><td colSpan={5} style={{textAlign:'center', color:'#64748b'}}>No sessions in this week</td></tr>}
+          {!view.length && (
+            <tr><td colSpan={5} style={{textAlign:'center', color:'#64748b'}}>No sessions to show</td></tr>
+          )}
         </tbody>
       </table>
 

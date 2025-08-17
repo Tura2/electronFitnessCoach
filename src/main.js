@@ -3,13 +3,12 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { openDb } = require('./db');
 const { v4: uuid } = require('uuid');
-const { registerInvitesIpc, createOrUpdateGoogleEventForSession } = require('./invitations');
+const { registerInvitesIpc, upsertGoogleEventForSession, deleteGoogleEventForSession } = require('./invitations');
 const { registerHistoryIpc } = require('./history');
-
-
 
 let db;
 
+/* ---------------- Settings helpers ---------------- */
 function getSetting(db, key, fallback = null) {
   try {
     const row = db.prepare('SELECT value FROM settings WHERE key=@key').get({ key });
@@ -27,7 +26,7 @@ function setSetting(db, key, value) {
   `).run({ key, value: str });
 }
 
-
+/* ---------------- App window ---------------- */
 function isDev() {
   return !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
 }
@@ -49,7 +48,8 @@ async function createWindow() {
     await win.loadURL(devServerURL);
     win.webContents.openDevTools({ mode: 'bottom' });
   } else {
-    const indexHtml = path.join(__dirname, 'ui', 'dist', 'index.html'); // כי ה-UI תחת src/ui
+    // UI is under src/ui/dist
+    const indexHtml = path.join(__dirname, 'ui', 'dist', 'index.html');
     await win.loadFile(indexHtml);
   }
 }
@@ -57,9 +57,9 @@ async function createWindow() {
 app.whenReady().then(() => {
   db = openDb(app);
   registerIpc();
+  registerInvitesIpc(ipcMain, db);  // Google Calendar manual-invite IPC
+  registerHistoryIpc(ipcMain, db);  // History IPC (your file)
   createWindow();
-  registerInvitesIpc(ipcMain, db);
-  registerHistoryIpc(ipcMain, db);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -70,11 +70,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ---------------------------
-// IPC Handlers
-// ---------------------------
+/* ---------------- IPC handlers ---------------- */
 function registerIpc() {
-  // ===== Trainees CRUD =====
+  /* ===== Trainees CRUD ===== */
   ipcMain.handle('trainees:list', () => {
     try {
       const stmt = db.prepare(`
@@ -107,7 +105,7 @@ function registerIpc() {
       });
       return { ok: true, id };
     } catch (e) {
-      return { ok: false, error: e.message, code: e.code };
+      return { ok: false, error: e.message };
     }
   });
 
@@ -125,7 +123,7 @@ function registerIpc() {
       const res = stmt.run(params);
       return { ok: res.changes > 0 };
     } catch (e) {
-      return { ok: false, error: e.message, code: e.code };
+      return { ok: false, error: e.message };
     }
   });
 
@@ -140,7 +138,7 @@ function registerIpc() {
     }
   });
 
-  // ===== Sessions CRUD (Calendar) =====
+  /* ===== Sessions CRUD (Calendar) ===== */
   ipcMain.handle('sessions:list', (_e, { start, end } = {}) => {
     try {
       if (start && end) {
@@ -159,53 +157,82 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('sessions:create', async (_e, payload) => {
-  const { v4: uuid } = require('uuid');
-  const id = uuid();
-  const {
-    trainee_id = null,
-    start_time,
-    end_time,
-    status = 'planned',
-    notes = '',
-    // new:
-    syncGoogle = false
-  } = payload || {};
+  // NO auto Google sync here (manual invite only via Messages)
+ipcMain.handle('sessions:create', async (_e, payload) => {
+  try {
+    const id = uuid();
+    const {
+      trainee_id = null,
+      start_time,
+      end_time,
+      notes = '',
+      status = 'planned',
+      syncGoogle = false   // NEW: checkbox from UI
+    } = payload || {};
 
-  if (!start_time) return { ok: false, error: 'start_time is required' };
+    if (!start_time) throw new Error('start_time is required');
 
-  const stmt = db.prepare(`
-    INSERT INTO sessions (id, trainee_id, start_time, end_time, location, status, notes)
-    VALUES (@id, @trainee_id, @start_time, @end_time, @location, @status, @notes)
-  `);
-  stmt.run({ id, trainee_id, start_time, end_time, location: '', status, notes });
+    db.prepare(`
+      INSERT INTO sessions (id, trainee_id, start_time, end_time, location, status, notes)
+      VALUES (@id, @trainee_id, @start_time, @end_time, '', @status, @notes)
+    `).run({
+      id, trainee_id, start_time, end_time: end_time || null, status, notes
+    });
 
-  // If requested or default-on via settings, mirror to Google
-  const auto = !!(db.prepare('SELECT value FROM settings WHERE key="google.syncOnCreate"').get()?.value);
-  if (syncGoogle || auto) {
-    try {
-      await createOrUpdateGoogleEventForSession(db, id);
-    } catch (err) {
-      // don't fail creation if Google fails; report back
-      return { ok: true, id, google: { ok: false, error: err.message } };
+    if (syncGoogle) {
+      // add/update in Google WITHOUT inviting athlete yet
+      try { await upsertGoogleEventForSession(db, id, { withAttendee: false }); }
+      catch (err) { /* don’t fail creation if Google fails */ }
     }
+
+    return { ok: true, id };
+  } catch (e) {
+    return { ok: false, error: e.message };
   }
-  return { ok: true, id };
 });
 
-
-  ipcMain.handle('sessions:delete', (_e, id) => {
-    try {
-      if (!id) throw new Error('id is required');
-      const stmt = db.prepare(`DELETE FROM sessions WHERE id=@id`);
-      const res = stmt.run({ id });
-      return { ok: res.changes > 0 };
-    } catch (e) {
-      return { ok: false, error: e.message };
+ipcMain.handle('sessions:update', async (_e, { id, data }) => {
+  try {
+    if (!id) throw new Error('id is required');
+    const fields = ['trainee_id','start_time','end_time','location','status','notes'];
+    const sets = [];
+    const params = { id };
+    for (const f of fields) {
+      if (data?.[f] !== undefined) { sets.push(`${f}=@${f}`); params[f] = data[f]; }
     }
-  });
+    if (!sets.length) throw new Error('No fields to update');
 
-  // ===== Settings (פשוט/אופציונלי לעתיד) =====
+    const res = db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id=@id`).run(params);
+
+    // optional Google sync on edit
+    if (data?.syncGoogle) {
+      try { await upsertGoogleEventForSession(db, id, { withAttendee: false }); }
+      catch (err) { /* swallow – user can retry from Messages */ }
+    }
+
+    return { ok: res.changes > 0 };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('sessions:delete', async (_e, { id, alsoDeleteGoogle = true }) => {
+  try {
+    if (!id) throw new Error('id is required');
+
+    // optionally delete Google event too
+    if (alsoDeleteGoogle) {
+      try { await deleteGoogleEventForSession(db, id); } catch {}
+    }
+
+    const res = db.prepare(`DELETE FROM sessions WHERE id=@id`).run({ id });
+    return { ok: res.changes > 0 };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+  /* ===== Settings (single & bulk) ===== */
   ipcMain.handle('settings:get', (_e, key) => {
     try {
       if (!key) throw new Error('key is required');
@@ -230,27 +257,25 @@ function registerIpc() {
       return { ok: false, error: e.message };
     }
   });
-  // ===== Settings (bulk) =====
-ipcMain.handle('settings:bulkGet', (_e, keys) => {
-  try {
-    if (!Array.isArray(keys)) throw new Error('keys[] is required');
-    const out = {};
-    for (const k of keys) out[k] = getSetting(db, k, null);
-    return { ok: true, data: out };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
 
-ipcMain.handle('settings:bulkSet', (_e, kv) => {
-  try {
-    if (!kv || typeof kv !== 'object') throw new Error('object payload required');
-    for (const [k, v] of Object.entries(kv)) setSetting(db, k, v);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
+  ipcMain.handle('settings:bulkGet', (_e, keys) => {
+    try {
+      if (!Array.isArray(keys)) throw new Error('keys[] is required');
+      const out = {};
+      for (const k of keys) out[k] = getSetting(db, k, null);
+      return { ok: true, data: out };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 
+  ipcMain.handle('settings:bulkSet', (_e, kv) => {
+    try {
+      if (!kv || typeof kv !== 'object') throw new Error('object payload required');
+      for (const [k, v] of Object.entries(kv)) setSetting(db, k, v);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 }
-

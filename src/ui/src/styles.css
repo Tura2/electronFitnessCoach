@@ -251,3 +251,25 @@ body{
 }
 .switch input:checked + .slider{ background: var(--primary-600); }
 .switch input:checked + .slider:before{ transform: translateX(20px); }
+
+/* Badges */
+.badge{
+  display:inline-block;
+  font-size:.75rem;
+  font-weight:600;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  color:var(--text-strong);
+}
+.badge-gray{
+  background:#f1f5f9; /* slate-100 */
+  border-color:#e2e8f0;
+  color:#334155;
+}
+.badge-green{
+  background:#ecfdf5;
+  border-color:#a7f3d0;
+  color:#065f46;
+}

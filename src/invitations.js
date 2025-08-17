@@ -4,7 +4,10 @@ const http = require('http');
 const { shell } = require('electron');
 const { v4: uuid } = require('uuid');
 
-const SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',            // read/write events
+  // 'https://www.googleapis.com/auth/calendar.calendarlist.readonly' // add later if you want to let user choose a calendar dynamically
+];
 const LOCAL_REDIRECT = 'http://127.0.0.1:5174/oauth2callback';
 
 function getSetting(db, key, fallback = null) {
@@ -41,7 +44,7 @@ function listSessionsForRange(db, startISO, endISO) {
   return db.prepare(sql).all({ start: startISO, end: endISO });
 }
 
-/* ---------- Google Calendar (OAuth) ---------- */
+/* -------------------- Google OAuth -------------------- */
 async function getGoogleClient(db) {
   const clientId = getSetting(db, 'google.clientId');
   const clientSecret = getSetting(db, 'google.clientSecret');
@@ -49,8 +52,15 @@ async function getGoogleClient(db) {
 
   const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret, LOCAL_REDIRECT);
 
+  // persist refreshed tokens
+  oAuth2Client.on('tokens', (tokens) => {
+    if (!tokens) return;
+    const prev = getSetting(db, 'google.tokens', {}) || {};
+    setSetting(db, 'google.tokens', { ...prev, ...tokens });
+  });
+
   const stored = getSetting(db, 'google.tokens', null);
-  if (stored && stored.access_token) {
+  if (stored && (stored.access_token || stored.refresh_token)) {
     oAuth2Client.setCredentials(stored);
     return oAuth2Client;
   }
@@ -80,12 +90,38 @@ async function getGoogleClient(db) {
   return oAuth2Client;
 }
 
-async function sendInviteGoogle(db, sessionId) {
-  const session = joinSession(db, sessionId);
-  if (!session) throw new Error('Session not found');
+/* -------------------- Google: list events -------------------- */
+async function listGoogleEvents(db, { start, end }) {
+  const auth = await getGoogleClient(db);
+  const calendar = google.calendar({ version: 'v3', auth });
 
-  // We need athlete email to send an attendee invite.
-  if (!session.email) throw new Error('This athlete has no email');
+  const calendarId = getSetting(db, 'google.calendarId', 'primary');
+
+  const { data } = await calendar.events.list({
+    calendarId,
+    timeMin: start, timeMax: end,
+    singleEvents: true,
+    orderBy: 'startTime',
+    maxResults: 2500,
+  });
+
+  const items = (data.items || []).map(ev => {
+    const startISO = ev.start?.dateTime || (ev.start?.date ? new Date(ev.start.date).toISOString() : null);
+    const endISO   = ev.end?.dateTime   || (ev.end?.date ? new Date(ev.end.date).toISOString()   : null);
+    return {
+      id: ev.id,
+      summary: ev.summary || '(no title)',
+      start: startISO,
+      end: endISO,
+    };
+  });
+  return items;
+}
+
+/* -------------------- Google: upsert event (no attendees by default) -------------------- */
+async function upsertGoogleEventForSession(db, sessionId, { withAttendee = false } = {}) {
+  const s = joinSession(db, sessionId);
+  if (!s) throw new Error('Session not found');
 
   const tz = getSetting(db, 'calendar.tz', 'Asia/Jerusalem');
   const coachName = getSetting(db, 'coach.name', 'Fitness Coach');
@@ -94,47 +130,82 @@ async function sendInviteGoogle(db, sessionId) {
   const auth = await getGoogleClient(db);
   const calendar = google.calendar({ version: 'v3', auth });
 
-  const start = session.start_time;
-  const end = session.end_time || new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString();
-  const traineeName = `${session.first_name || ''} ${session.last_name || ''}`.trim() || 'Athlete';
+  const start = s.start_time;
+  const end = s.end_time || new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString();
 
-  const resp = await calendar.events.insert({
-    calendarId,
-    sendUpdates: 'all',
-    requestBody: {
-      summary: `Training with ${coachName}`,
-      description: session.notes || '',
-      start: { dateTime: start, timeZone: tz },
-      end:   { dateTime: end,   timeZone: tz },
-      attendees: [{ email: session.email, displayName: traineeName }],
-      reminders: { useDefault: true },
-      source: { title: 'Fitness Coach App' },
-    },
-  });
+  const traineeName = `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Athlete';
+  const body = {
+    summary: `Training with ${coachName}`,
+    description: s.notes || '',
+    start: { dateTime: start, timeZone: tz },
+    end:   { dateTime: end,   timeZone: tz },
+    reminders: { useDefault: true },
+    source: { title: 'Fitness Coach App' },
+  };
+  if (withAttendee && s.email) {
+    body.attendees = [{ email: s.email, displayName: traineeName }];
+  }
 
-  markSent(db, sessionId, 'google-calendar', { eventId: resp.data.id });
-  return { ok: true, eventId: resp.data.id };
+  let eventId = s.google_event_id || null;
+  let resp;
+  if (eventId) {
+    resp = await calendar.events.patch({
+      calendarId, eventId,
+      sendUpdates: withAttendee ? 'all' : 'none',
+      requestBody: body,
+    });
+    eventId = resp?.data?.id || eventId;
+  } else {
+    resp = await calendar.events.insert({
+      calendarId,
+      sendUpdates: withAttendee ? 'all' : 'none',
+      requestBody: body,
+    });
+    eventId = resp?.data?.id;
+    if (eventId) {
+      db.prepare(`UPDATE sessions SET google_event_id=@eventId WHERE id=@id`).run({ id: sessionId, eventId });
+    }
+  }
+
+  // mark as sent only when we actually invite attendee
+  if (withAttendee) {
+    db.prepare(`UPDATE sessions SET status='sent' WHERE id=@id`).run({ id: sessionId });
+    db.prepare(`
+      INSERT INTO sent_messages (id, trainee_id, template_id, channel, context_json)
+      VALUES (@id, @trainee_id, NULL, 'google-calendar', @ctx)
+    `).run({
+      id: uuid(),
+      trainee_id: s.trainee_id || null,
+      ctx: JSON.stringify({ sessionId, eventId, at: new Date().toISOString(), invited: true }),
+    });
+  }
+
+  return { ok: true, eventId };
 }
 
-/* ---------- Common helpers ---------- */
-function markSent(db, sessionId, channel, extra = {}) {
-  db.prepare(`UPDATE sessions SET status='sent' WHERE id=@id`).run({ id: sessionId });
-  db.prepare(`
-    INSERT INTO sent_messages (id, trainee_id, template_id, channel, context_json)
-    VALUES (@id, @trainee_id, NULL, @channel, @ctx)
-  `).run({
-    id: uuid(),
-    trainee_id: joinSession(db, sessionId)?.trainee_id || null,
-    channel,
-    ctx: JSON.stringify({ sessionId, ...extra, at: new Date().toISOString() }),
-  });
+/* -------------------- Google: delete by session -------------------- */
+async function deleteGoogleEventForSession(db, sessionId) {
+  const s = joinSession(db, sessionId);
+  if (!s?.google_event_id) return { ok: true, skipped: true };
+
+  const calendarId = getSetting(db, 'google.calendarId', 'primary');
+  const auth = await getGoogleClient(db);
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  await calendar.events.delete({ calendarId, eventId: s.google_event_id, sendUpdates: 'all' });
+  db.prepare(`UPDATE sessions SET google_event_id=NULL WHERE id=@id`).run({ id: sessionId });
+  return { ok: true };
 }
 
-/* ---------- IPC registration ---------- */
+/* -------------------- Invites (Messages page) -------------------- */
+async function sendInviteGoogle(db, sessionId) {
+  // just reuse upsert with attendee
+  return upsertGoogleEventForSession(db, sessionId, { withAttendee: true });
+}
+
+/* -------------------- IPC -------------------- */
 function registerInvitesIpc(ipcMain, db) {
   ipcMain.handle('invites:listWeek', (_e, { start, end }) => listSessionsForRange(db, start, end));
-
-  // Google only
   ipcMain.handle('invites:sendGoogle', async (_e, sessionId) => {
     try { return await sendInviteGoogle(db, sessionId); }
     catch (e) { return { ok: false, error: e.message }; }
@@ -148,6 +219,24 @@ function registerInvitesIpc(ipcMain, db) {
     }
     return results;
   });
+
+  // new:
+  ipcMain.handle('google:listEvents', async (_e, { start, end }) => {
+    try { return { ok: true, items: await listGoogleEvents(db, { start, end }) }; }
+    catch (e) { return { ok: false, error: e.message, items: [] }; }
+  });
+  ipcMain.handle('google:upsertSession', async (_e, { sessionId, withAttendee = false }) => {
+    try { return await upsertGoogleEventForSession(db, sessionId, { withAttendee }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('google:deleteForSession', async (_e, sessionId) => {
+    try { return await deleteGoogleEventForSession(db, sessionId); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 }
 
-module.exports = { registerInvitesIpc };
+module.exports = {
+  registerInvitesIpc,
+  upsertGoogleEventForSession,
+  deleteGoogleEventForSession
+};
