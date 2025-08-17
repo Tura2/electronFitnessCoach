@@ -1,0 +1,33 @@
+:root {
+  --bg:#0f172a;       /* כחול-כהה לרקע כותרת */
+  --fg:#fff;
+  --card:#ffffff;
+  --muted:#64748b;
+  --border:#e2e8f0;
+  --accent:#2563eb;   /* כחול חי לטפס */
+}
+
+* { box-sizing: border-box; }
+html, body { margin:0; font-family: Heebo, system-ui, Arial; background:#f8fafc; color:#0f172a; }
+
+header { background:var(--bg); color:var(--fg); padding:16px 20px; }
+header h1 { margin:0 0 10px 0; font-size:20px; }
+nav button {
+  background:transparent; color:var(--fg); border:1px solid transparent; padding:8px 12px; margin:0 6px 6px 0; border-radius:10px; cursor:pointer;
+}
+nav button.active { background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.2); }
+
+main { padding:20px; }
+.tab { display:none; }
+.tab.active { display:block; }
+
+form { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:16px; }
+.grid { display:grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap:12px; }
+label { display:flex; flex-direction:column; gap:6px; font-size:14px; color:#0f172a; }
+input, select { padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:14px; background:#fff; }
+button[type="submit"] { margin-top:12px; background:var(--accent); color:#fff; border:none; padding:10px 16px; border-radius:10px; cursor:pointer; }
+
+table { width:100%; border-collapse: collapse; background:#fff; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+th, td { padding:12px; border-bottom:1px solid var(--border); text-align:right; }
+th { background:#f1f5f9; font-weight:600; }
+td button.del { background:#ef4444; color:#fff; border:none; padding:6px 10px; border-radius:8px; cursor:pointer; }
