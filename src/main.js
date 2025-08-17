@@ -1,3 +1,4 @@
+// src/main.js
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { openDb } = require('./db');
@@ -5,10 +6,15 @@ const { v4: uuid } = require('uuid');
 
 let db;
 
-function createWindow() {
+function isDev() {
+  // כאשר מריצים דרך npm run dev נגדיר VITE_DEV_SERVER_URL
+  return !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
+}
+
+async function createWindow() {
   const win = new BrowserWindow({
-    width: 1100,
-    height: 780,
+    width: 1200,
+    height: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -16,8 +22,15 @@ function createWindow() {
     }
   });
 
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  if (!app.isPackaged) win.webContents.openDevTools({ mode: 'bottom' });
+  const devServerURL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+
+  if (isDev()) {
+    await win.loadURL(devServerURL);
+    win.webContents.openDevTools({ mode: 'bottom' });
+  } else {
+  const indexHtml = path.join(__dirname, 'ui', 'dist', 'index.html');
+  await win.loadFile(indexHtml);
+}
 }
 
 app.whenReady().then(() => {
@@ -34,7 +47,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// --- IPC Handlers (Trainees CRUD) ---
+// --- IPC Handlers (כמו קודם, דוגמת Trainees CRUD) ---
 function registerIpc() {
   ipcMain.handle('trainees:list', () => {
     const stmt = db.prepare(`SELECT * FROM trainees ORDER BY created_at DESC`);

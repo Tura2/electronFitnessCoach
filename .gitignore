@@ -4,3 +4,4 @@ node_modules
 *.sqlite
 *.db
 .DS_Store
+src/ui/dist
