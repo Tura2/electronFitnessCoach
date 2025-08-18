@@ -128,16 +128,35 @@ function registerIpc() {
   });
 
   ipcMain.handle('trainees:delete', (_e, id) => {
-    try {
-      if (!id) throw new Error('id is required');
-      const stmt = db.prepare(`DELETE FROM trainees WHERE id=@id`);
-      const res = stmt.run({ id });
-      return { ok: res.changes > 0 };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  });
+  try {
+    if (!id) throw new Error('id is required');
 
+    // One transaction: detach references, then delete the trainee
+    const run = db.transaction((id) => {
+      // Detach from known child tables
+      db.prepare(`UPDATE sessions SET trainee_id = NULL WHERE trainee_id = @id`).run({ id });
+      db.prepare(`UPDATE sent_messages SET trainee_id = NULL WHERE trainee_id = @id`).run({ id });
+
+      // TODO: if you add more tables that FK -> trainees(id), null them here too.
+      // Example:
+      // db.prepare(`UPDATE payments SET trainee_id=NULL WHERE trainee_id=@id`).run({ id });
+
+      // Now it's safe to delete the parent row
+      const res = db.prepare(`DELETE FROM trainees WHERE id = @id`).run({ id });
+      return res;
+    });
+
+    const res = run(id);
+    return { ok: res.changes > 0 };
+  } catch (e) {
+    // Helpful diagnostics if something still blocks the delete
+    try {
+      const fk = db.prepare('PRAGMA foreign_key_check').all();
+      if (fk.length) e.message += ' | foreign_key_check=' + JSON.stringify(fk);
+    } catch {}
+    return { ok: false, error: e.message };
+  }
+});
   /* ===== Sessions CRUD (Calendar) ===== */
   ipcMain.handle('sessions:list', (_e, { start, end } = {}) => {
     try {
