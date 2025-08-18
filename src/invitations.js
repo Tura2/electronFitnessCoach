@@ -1,28 +1,12 @@
-// src/invitations.js — fixed & hardened
-// - Robust Google OAuth (persist/refresh tokens)
-// - Cached event listing (TTL + in-flight dedupe)
-// - Rate-limited bulk invites to avoid QPM spikes
-// - Safe all‑day handling (date vs dateTime)
-// - Resilient upsert (patch→insert fallback) and delete
-// - IPC handlers return consistent { ok, ... } shapes
-
 const { google } = require('googleapis');
 const http = require('http');
 const { shell } = require('electron');
 const { v4: uuid } = require('uuid');
 
-// ===== Config =====
-const SCOPES = [
-  'https://www.googleapis.com/auth/calendar.events', // read/write events
-  // 'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-];
+const SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
 const LOCAL_REDIRECT = 'http://127.0.0.1:5174/oauth2callback';
+const DEFAULT_MIN_INTERVAL_MS = 1200;
 
-// Optional: soft rate limit across bulk calls (ms between requests)
-// Can be overridden from Settings with key "google.minIntervalMs"
-const DEFAULT_MIN_INTERVAL_MS = 1200; // ~50 ops/min
-
-// ===== Small DB helpers =====
 function getSetting(db, key, fallback = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key=@key').get({ key });
   if (!row) return fallback;
@@ -45,7 +29,6 @@ function joinSession(db, sessionId) {
   `;
   return db.prepare(sql).get({ id: sessionId });
 }
-
 function listSessionsForRange(db, startISO, endISO) {
   const sql = `
     SELECT s.*, t.first_name, t.last_name, t.email
@@ -57,28 +40,34 @@ function listSessionsForRange(db, startISO, endISO) {
   return db.prepare(sql).all({ start: startISO, end: endISO });
 }
 
-// ===== OAuth client (persists + refreshes tokens) =====
 async function getGoogleClient(db) {
-  const clientId = getSetting(db, 'google.clientId');
-  const clientSecret = getSetting(db, 'google.clientSecret');
-  if (!clientId || !clientSecret) throw new Error('Google OAuth not configured (Settings → Google)');
+  const envId = process.env.GOOGLE_CLIENT_ID || '';
+  const envSecret = process.env.GOOGLE_CLIENT_SECRET || '';
 
-  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret, LOCAL_REDIRECT);
+  const storedId = getSetting(db, 'google.clientId', '');
+  const storedSecret = getSetting(db, 'google.clientSecret', '');
 
-  // persist refreshed tokens
+  const clientId = storedId || envId;
+  const clientSecret = storedSecret || envSecret;
+
+  if (!clientId) throw new Error('Google login unavailable (missing clientId).');
+
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret || undefined, LOCAL_REDIRECT);
+
   oAuth2Client.on('tokens', (tokens) => {
     if (!tokens) return;
     const prev = getSetting(db, 'google.tokens', {}) || {};
     setSetting(db, 'google.tokens', { ...prev, ...tokens });
   });
 
-  const stored = getSetting(db, 'google.tokens', null);
-  if (stored && (stored.access_token || stored.refresh_token)) {
-    oAuth2Client.setCredentials(stored);
+  const storedTokens = getSetting(db, 'google.tokens', null);
+  if (storedTokens?.access_token || storedTokens?.refresh_token) {
+    oAuth2Client.setCredentials(storedTokens);
+    if (!storedId && clientId) setSetting(db, 'google.clientId', clientId);
+    if (!storedSecret && clientSecret) setSetting(db, 'google.clientSecret', clientSecret);
     return oAuth2Client;
   }
 
-  // First-time auth flow
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
@@ -96,9 +85,7 @@ async function getGoogleClient(db) {
           res.end('You can close this window.');
           srv.close();
           resolve(code);
-        } else {
-          res.statusCode = 404; res.end('Not found');
-        }
+        } else { res.statusCode = 404; res.end('Not found'); }
       } catch (e) { srv.close(); reject(e); }
     });
     srv.listen(5174, '127.0.0.1', () => shell.openExternal(authUrl));
@@ -108,25 +95,22 @@ async function getGoogleClient(db) {
   const { tokens } = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
   setSetting(db, 'google.tokens', tokens);
+  if (!storedId && clientId) setSetting(db, 'google.clientId', clientId);
+  if (!storedSecret && clientSecret) setSetting(db, 'google.clientSecret', clientSecret);
   return oAuth2Client;
 }
 
-// ===== Utilities =====
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Normalize Google event start/end to strings the UI expects:
-// - all‑day → 'YYYY-MM-DD'
-// - timed  → ISO string
 function normalizeGRange(ev) {
   const start = ev.start?.dateTime || ev.start?.date || null;
   const end = ev.end?.dateTime || ev.end?.date || null;
   return { start, end };
 }
 
-// ===== Cached Google list with in-flight dedupe =====
-const _listCache = new Map(); // key -> { ts, items }
-const _inFlight = new Map();  // key -> Promise
-const LIST_TTL_MS = 60_000;   // 60s
+const _listCache = new Map();
+const _inFlight = new Map();
+const LIST_TTL_MS = 60_000;
 
 async function listGoogleEvents(db, { start, end }) {
   const key = `${start}|${end}`;
@@ -150,12 +134,7 @@ async function listGoogleEvents(db, { start, end }) {
     });
     const items = (data.items || []).map(ev => {
       const { start, end } = normalizeGRange(ev);
-      return {
-        id: ev.id,
-        summary: ev.summary || '(no title)',
-        start, // 'YYYY-MM-DD' for all‑day, ISO string for timed
-        end,
-      };
+      return { id: ev.id, summary: ev.summary || '(no title)', start, end };
     });
     _listCache.set(key, { ts: Date.now(), items });
     _inFlight.delete(key);
@@ -166,7 +145,6 @@ async function listGoogleEvents(db, { start, end }) {
   return p;
 }
 
-// ===== Resilient upsert / delete =====
 async function upsertGoogleEventForSession(db, sessionId, { withAttendee = false } = {}) {
   const s = joinSession(db, sessionId);
   if (!s) throw new Error('Session not found');
@@ -188,12 +166,9 @@ async function upsertGoogleEventForSession(db, sessionId, { withAttendee = false
     start: { dateTime: start, timeZone: tz },
     end:   { dateTime: end,   timeZone: tz },
     location: s.location || undefined,
-    reminders: { useDefault: true },
-    source: { title: 'Fitness Coach App', url: 'https://github.com/Tura2/electronFitnessCoach' },
+    reminders: { useDefault: true }
   };
-  if (withAttendee && s.email) {
-    body.attendees = [{ email: s.email, displayName: traineeName }];
-  }
+  if (withAttendee && s.email) body.attendees = [{ email: s.email, displayName: traineeName }];
 
   const sendUpdates = withAttendee ? 'all' : 'none';
   let eventId = s.google_event_id || null;
@@ -204,19 +179,14 @@ async function upsertGoogleEventForSession(db, sessionId, { withAttendee = false
     } else {
       const resp = await calendar.events.insert({ calendarId, sendUpdates, requestBody: body });
       eventId = resp?.data?.id;
-      if (eventId) {
-        db.prepare(`UPDATE sessions SET google_event_id=@eventId WHERE id=@id`).run({ id: sessionId, eventId });
-      }
+      if (eventId) db.prepare(`UPDATE sessions SET google_event_id=@eventId WHERE id=@id`).run({ id: sessionId, eventId });
     }
   } catch (e) {
-    // If event was deleted on Google, patch will 404 → try insert
     const is404 = e?.code === 404 || e?.response?.status === 404;
     if (is404) {
       const resp = await calendar.events.insert({ calendarId, sendUpdates, requestBody: body });
       eventId = resp?.data?.id;
-      if (eventId) {
-        db.prepare(`UPDATE sessions SET google_event_id=@eventId WHERE id=@id`).run({ id: sessionId, eventId });
-      }
+      if (eventId) db.prepare(`UPDATE sessions SET google_event_id=@eventId WHERE id=@id`).run({ id: sessionId, eventId });
     } else {
       throw e;
     }
@@ -248,7 +218,6 @@ async function deleteGoogleEventForSession(db, sessionId) {
   try {
     await calendar.events.delete({ calendarId, eventId: s.google_event_id, sendUpdates: 'all' });
   } catch (e) {
-    // if already deleted (404), ignore
     const is404 = e?.code === 404 || e?.response?.status === 404;
     if (!is404) throw e;
   }
@@ -256,7 +225,23 @@ async function deleteGoogleEventForSession(db, sessionId) {
   return { ok: true };
 }
 
-// ===== Simple rate limiter for bulk ops =====
+async function disconnectGoogle(db) {
+  const tokens = getSetting(db, 'google.tokens', null);
+  try {
+    if (tokens) {
+      const clientId = getSetting(db, 'google.clientId', process.env.GOOGLE_CLIENT_ID || '');
+      const clientSecret = getSetting(db, 'google.clientSecret', process.env.GOOGLE_CLIENT_SECRET || '');
+      const oAuth2Client = new google.auth.OAuth2(clientId || undefined, clientSecret || undefined, LOCAL_REDIRECT);
+      oAuth2Client.setCredentials(tokens);
+      try { await oAuth2Client.revokeCredentials(); } catch {}
+    }
+  } finally {
+    setSetting(db, 'google.tokens', null);
+    _listCache.clear();
+  }
+  return { ok: true };
+}
+
 let _lastCallAt = 0;
 async function rateLimited(fn, minIntervalMs) {
   const now = Date.now();
@@ -267,8 +252,19 @@ async function rateLimited(fn, minIntervalMs) {
   return res;
 }
 
-// ===== IPC =====
 function registerInvitesIpc(ipcMain, db) {
+  // Make registration idempotent (safe across hot reloads)
+  const CHANNELS = [
+    'invites:listWeek',
+    'invites:sendGoogle',
+    'invites:sendAllGoogle',
+    'google:listEvents',
+    'google:upsertSession',
+    'google:deleteForSession',
+    'google:disconnect',
+  ];
+  CHANNELS.forEach(ch => { try { ipcMain.removeHandler(ch); } catch {} });
+
   ipcMain.handle('invites:listWeek', (_e, { start, end }) => listSessionsForRange(db, start, end));
 
   ipcMain.handle('invites:sendGoogle', async (_e, sessionId) => {
@@ -306,6 +302,16 @@ function registerInvitesIpc(ipcMain, db) {
     try { return await deleteGoogleEventForSession(db, sessionId); }
     catch (e) { return { ok: false, error: e.message || String(e) }; }
   });
+
+  // NEW: allow disconnecting (clear stored tokens)
+  ipcMain.handle('google:disconnect', async () => {
+    try {
+      setSetting(db, 'google.tokens', null);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
 }
 
 module.exports = {
@@ -313,4 +319,5 @@ module.exports = {
   listGoogleEvents,
   upsertGoogleEventForSession,
   deleteGoogleEventForSession,
+  disconnectGoogle,
 };

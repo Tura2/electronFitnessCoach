@@ -1,24 +1,17 @@
 /* ========= Design Tokens ========= */
 :root{
-  /* Brand */
+  /* Brand (shared) */
   --primary-600:#2563EB;
   --primary-600-hover:#1D4ED8;
-  --primary-50:#EFF6FF;
+  --primary-50:#EFF6FF;         /* overridden per theme for highlights */
   --accent-500:#0EA5E9;
 
-  /* Status */
+  /* Status (shared) */
   --success:#10B981;
   --warning:#F59E0B;
   --danger:#EF4444;
 
-  /* Text & Surfaces (light) */
-  --text-strong:#0F172A;
-  --text-muted:#475569;
-  --surface:#FFFFFF;
-  --bg:#F8FAFC;
-  --border:#E2E8F0;
-
-  /* Elevation */
+  /* Elevation (shared defaults; overridden per theme if needed) */
   --shadow-sm:0 1px 2px rgba(0,0,0,.06), 0 1px 1px rgba(0,0,0,.04);
   --shadow-md:0 6px 18px rgba(15,23,42,.08);
 
@@ -32,18 +25,32 @@
   --focus: 0 0 0 3px rgba(37,99,235,.2);
 }
 
-/* Dark mode overrides */
-@media (prefers-color-scheme: dark){
-  :root{
-    --surface:#0B1220;
-    --bg:#050A15;
-    --text-strong:#E5E7EB;
-    --text-muted:#9CA3AF;
-    --border:#1F2A44;
-    --shadow-sm:0 1px 2px rgba(0,0,0,.5);
-    --shadow-md:0 8px 24px rgba(0,0,0,.45);
-    --primary-50:#0B1A3A;
-  }
+/* ========= LIGHT THEME ========= */
+html[data-theme="light"]{
+  --bg:#F7F9FC;                 /* softer than #F8FAFC */
+  --surface:#FFFFFF;
+  --surface-2:#FBFCFF;          /* subtle elevated surface */
+  --control-bg:#FFFFFF;         /* inputs/selects background */
+  --text-strong:#0E1726;        /* deep slate/navy */
+  --text-muted:#55657A;         /* slightly cooler muted */
+  --border:#E3E8F4;             /* cool gray border */
+  --primary-50:#EEF2FF;         /* header/selection tint */
+  --shadow-sm:0 1px 2px rgba(14,23,38,.06), 0 1px 1px rgba(14,23,38,.04);
+  --shadow-md:0 8px 24px rgba(14,23,38,.08);
+}
+
+/* ========= DARK THEME (your palette) ========= */
+html[data-theme="dark"]{
+  --surface:#0B1220;
+  --surface-2:#0D1628;
+  --control-bg:#0E172A;
+  --bg:#050A15;
+  --text-strong:#E5E7EB;
+  --text-muted:#9CA3AF;
+  --border:#1F2A44;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.5);
+  --shadow-md:0 8px 24px rgba(0,0,0,.45);
+  --primary-50:#0B1A3A;
 }
 
 /* ========= Base ========= */
@@ -115,16 +122,13 @@ body{
 
 /* Inputs */
 .input,.select,input,select,textarea{
-  background:var(--surface); color:var(--text-strong); border:1px solid var(--border);
+  background:var(--control-bg); color:var(--text-strong); border:1px solid var(--border);
   border-radius:var(--r12); padding:10px 12px; min-height:40px; font-size:14px;
 }
 .input:focus,.select:focus,input:focus,select:focus,textarea:focus{
   outline:none; box-shadow:var(--focus); border-color:var(--primary-600);
 }
 ::placeholder{color:#94a3b8}
-@media (prefers-color-scheme: dark){
-  .input,.select,input,select,textarea{background:#0E172A; color:var(--text-strong)}
-}
 
 /* Field grid used in filters */
 .inputs{display:grid; grid-template-columns:repeat(5,minmax(180px,1fr)); gap:var(--space-3)}
@@ -163,7 +167,7 @@ body{
   border-bottom:none;
   border-top-left-radius:var(--r16);
   border-top-right-radius:var(--r16);
-  margin:-16px -16px 12px -16px; /* edge-to-edge header */
+  margin:-16px -16px 12px -16px;
   padding:12px 16px;
   display:flex; align-items:center; justify-content:space-between; gap:12px;
 }
@@ -179,7 +183,7 @@ body{
 .modal-card input,
 .modal-card select,
 .modal-card textarea{
-  background:var(--surface);
+  background:var(--control-bg);
   color:var(--text-strong);
   border:1px solid var(--border);
   border-radius:12px;
@@ -264,7 +268,7 @@ body{
   color:var(--text-strong);
 }
 .badge-gray{
-  background:#f1f5f9; /* slate-100 */
+  background:#f1f5f9;
   border-color:#e2e8f0;
   color:#334155;
 }
@@ -273,3 +277,17 @@ body{
   border-color:#a7f3d0;
   color:#065f46;
 }
+.theme-toggle-label {
+  display:flex; align-items:center; gap:10px;
+}
+.theme-toggle {
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:999px;
+  padding:4px 8px;
+  cursor:pointer;
+  line-height:1;
+  box-shadow:var(--shadow-sm);
+}
+.theme-toggle:hover { background: var(--primary-50); }
+.theme-toggle .thumb { display:inline-block; width:20px; text-align:center; }

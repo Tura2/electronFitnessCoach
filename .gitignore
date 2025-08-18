@@ -5,3 +5,4 @@ node_modules
 *.db
 .DS_Store
 src/ui/dist
+src/env.local.json
