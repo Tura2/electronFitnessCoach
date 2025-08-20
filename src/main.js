@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { openDb } = require('./db');
@@ -36,15 +36,34 @@ function isDev() {
   return !!process.env.VITE_DEV_SERVER_URL || !app.isPackaged;
 }
 
+function resolveIcon() {
+  const file = process.platform === 'win32' ? 'app.ico' : 'icon-256.png';
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icons', file)        // packaged
+    : path.join(__dirname, '..', 'resources', 'icons', file); // dev
+}
+
+const iconPath = path.join(__dirname, 'resources', 'icons', 'app.ico');
 async function createWindow() {
+  app.setAppUserModelId('com.offir.fitnesscoach'); 
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: resolveIcon(),
+    title: 'Fitness Coach Calendar',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
+    return { action: 'allow' };
+  });
+  win.webContents.on('will-navigate', (e, url) => {
+    const isExternal = /^https?:\/\//i.test(url) && !url.includes('localhost:5173');
+    if (isExternal) { e.preventDefault(); shell.openExternal(url); }
   });
   const devServerURL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
   if (isDev()) {
@@ -241,6 +260,14 @@ function registerIpc() {
       for (const [k, v] of Object.entries(kv)) setSetting(db, k, v);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
+  });
+  
+   // --- External links ---
+  ipcMain.handle('openExternal', (_e, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      return shell.openExternal(url);
+    }
+    throw new Error('Invalid URL for openExternal');
   });
 
   ipcMain.handle('google:disconnect', (_e) => {

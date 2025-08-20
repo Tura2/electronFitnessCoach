@@ -1,23 +1,70 @@
 {
   "name": "fitness-coach-desktop",
   "version": "1.0.0",
+  "description": "Fitness Coach Desktop",
+  "author": "Offir Tura",
   "main": "src/main.js",
   "type": "commonjs",
-  "description": "",
-  "author": "",
-  "license": "ISC",
+
+  "build": {
+    "appId": "com.offir.fitnesscoach",
+    "productName": "Fitness Coach Desktop",
+
+    "asar": true,
+    "files": [
+      "**/*",
+      "!**/*.map",
+      "!**/__tests__/**",
+      "!**/*.test.*",
+      "!src/ui/node_modules/**",
+      "!src/ui/public/**",
+      "!src/ui/src/**",
+      "src/ui/dist/**"
+    ],
+
+    "extraResources": [
+      { "from": "resources/icons", "to": "icons" }
+    ],
+    "directories": {
+      "buildResources": "resources",
+      "output": "dist"
+    },
+
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "resources/icons/app.ico",
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Fitness Coach Desktop"
+    }
+    },
+
   "scripts": {
+    "build": "npm run build:react && electron-builder -w",
+    "build:react": "vite build --config src/ui/vite.config.mjs",
+
     "dev": "concurrently -k \"npm:dev:react\" \"npm:dev:electron:wait\"",
     "dev:react": "vite --config src/ui/vite.config.mjs --open",
     "dev:electron": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "dev:electron:wait": "wait-on http://localhost:5173 && npm run dev:electron",
-    "build:react": "vite build --config src/ui/vite.config.mjs",
+
+    "icons": "node src/make-icons.js",
     "start": "electron .",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+
+    "rebuild": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps",
+
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+
   "keywords": [],
+
   "dependencies": {
     "@fullcalendar/core": "^6.1.19",
     "@fullcalendar/daygrid": "^6.1.19",
@@ -30,12 +77,15 @@
     "react-dom": "^19.1.1",
     "uuid": "^11.1.0"
   },
+
   "devDependencies": {
-    "@electron/rebuild": "^4.0.1",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.0",
     "cross-env": "^10.0.0",
     "electron": "^37.3.0",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.34.3",
     "vite": "^7.1.2",
     "wait-on": "^8.0.4"
   }

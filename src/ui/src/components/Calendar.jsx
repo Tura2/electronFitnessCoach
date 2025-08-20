@@ -34,6 +34,7 @@ export default function Calendar() {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [infoMsg, setInfoMsg] = useState(''); // NEW
 
   // modal state
   const [open, setOpen] = useState(false);
@@ -146,7 +147,9 @@ export default function Calendar() {
     const ev = info.event;
     const xp = ev.extendedProps || {};
     if (xp.source === 'google') {
-      alert('Google events are read-only here.\nCreate your practices (local) to edit/delete.');
+      // REPLACED alert() with non-blocking info toast
+      setInfoMsg('Google events are read-only here. Create a local practice to edit/delete.');
+      setTimeout(() => setInfoMsg(''), 2800);
       return;
     }
     setMode('edit');
@@ -236,8 +239,9 @@ export default function Calendar() {
         </button>
       </div>
 
-      {toast && <div className="toast success">{toast}</div>}
-      {errorMsg && <div className="toast error">{errorMsg}</div>}
+      {toast && <div className="toast success" role="status" aria-live="polite">{toast}</div>}
+      {infoMsg && <div className="toast info" role="status" aria-live="polite">{infoMsg}</div>}
+      {errorMsg && <div className="toast error" role="alert" aria-live="assertive">{errorMsg}</div>}
       {loading && <p>Loading…</p>}
 
       {/* Calendar container that can grow */}
@@ -247,7 +251,6 @@ export default function Calendar() {
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView="timeGridWeek"
           headerToolbar={{ left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' }}
-
           height="100%"
           expandRows
           timeZone="local"
@@ -325,6 +328,7 @@ export default function Calendar() {
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                 placeholder="Optional notes…"
+                dir="auto"
               />
             </label>
 

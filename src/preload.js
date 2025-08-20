@@ -57,18 +57,23 @@
     setSettings: (obj) => inv('settings:bulkSet', obj),
     getSetting: (key) => inv('settings:get', key),
     setSetting: (key, value) => inv('settings:set', { key, value }),
+
+    /* External links */
+    openExternal: (url) => inv('openExternal', url),
   };
 
   expose('api', api);
 
-  (async () => {
-    try {
-      const res = await inv('settings:get', 'ui.theme');
+  const applyTheme = (mode) => {
+    const root = (typeof document !== 'undefined' && document.documentElement) ? document.documentElement : null;
+    if (root) root.setAttribute('data-theme', mode);
+  };
+
+  inv('settings:get', 'ui.theme')
+    .then(res => {
       const saved = typeof res?.value === 'string' ? res.value : null;
       const mode = (saved === 'light' || saved === 'dark') ? saved : 'dark';
-      document.documentElement.setAttribute('data-theme', mode);
-    } catch {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
-  })();
+      applyTheme(mode);
+    })
+    .catch(() => applyTheme('dark'));
 })();

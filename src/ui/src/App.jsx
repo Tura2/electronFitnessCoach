@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import Topbar from './components/Topbar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Calendar from './components/Calendar.jsx';
 import Athletes from './components/Athletes.jsx';
@@ -17,7 +16,7 @@ export default function App(){
         <Sidebar active={active} onSelect={setActive} tabs={TABS}/>
       </aside>
       <div style={{display:'flex', flexDirection:'column', minWidth:0}}>
-        <Topbar/>
+
         <main className="content">
           {active==='Calendar' && <Calendar/>}
           {active==='Athletes' && <Athletes/>}

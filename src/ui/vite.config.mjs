@@ -1,18 +1,17 @@
-// src/ui/vite.config.js
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = __dirname; // = src/ui
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  root,
-  plugins: [react()],
-  server: { port: 5173, strictPort: true },
+  root: __dirname,       // שורש הפרונט
+  base: './',            // חשוב: קבצים יחסיים עבור file://
   build: {
-    outDir: path.resolve(root, 'dist'),
-    emptyOutDir: true
-  }
-});
+    outDir: path.resolve(__dirname, 'dist'), // יוצר src/ui/dist
+    emptyOutDir: true,
+    assetsDir: 'assets'
+  },
+  plugins: [react()]
+})
